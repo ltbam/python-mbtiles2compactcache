@@ -389,7 +389,10 @@ def main(arguments):
             current_tile_time = (datetime.datetime.now() - start_time).total_seconds() / current_tile * (
                         number_of_tiles - current_tile)  # seconds to reach 100% Tiles
             current_percent = current_tile / number_of_tiles * 100
-            tiles_per_second = round((current_tile / (datetime.datetime.now() - start_time).total_seconds()), 2)
+            try:
+                tiles_per_second = round((current_tile / (datetime.datetime.now() - start_time).total_seconds()), 2)
+            except:
+                tiles_per_second = 999999
             print('{0} % done - Time {1} | ETA {2} | Tiles per Second {3}\n'.format('{:3.2f}'.format(current_percent),
                                                                                     format(str(
                                                                                         datetime.datetime.now().strftime(
