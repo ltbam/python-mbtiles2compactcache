@@ -110,6 +110,9 @@ def get_arguments():
     parser.add_argument('-l', '--level',
                         help='Do only this Level (useful for parallel starts with Grayscale).', default=-1, type=int,
                         required=False)
+    parser.add_argument('-ml', '--max_level',
+                        help='Do until this Level.', default=-1, type=int,
+                        required=False)
     parser.add_argument('-g', '--grayscale',
                         help='Convert tiles to grayscale while processing.', default=False, action="store_true",
                         required=False)
@@ -122,8 +125,6 @@ def get_arguments():
         parser.error("Grayscale option requires Pillow (PIL) module to be installed.")
     if not os.path.exists(arguments.source):
         parser.error("Input folder does not exist or is inaccessible.")
-    if not os.path.exists(arguments.destination):
-        parser.error("Output folder does not exist or is inaccessible.")
 
     return arguments
 
@@ -287,120 +288,131 @@ def main(arguments):
     global output_path
 
     # parse parameter
-    mb_tile_folder = arguments.source
+    mb_tile_file = arguments.source
     cache_output_folder = arguments.destination
     level_param = arguments.level
+    max_level_param = arguments.max_level
     do_grayscale = arguments.grayscale
 
-    # loop through all .mbtile files
-    for root, dirs, files in os.walk(mb_tile_folder):
-        # convert each .mbtile file to bundle cache
-        # sore the list of files numerical
-        for mbtile in sorted([x for x in files if x.endswith('.mbtile')],
-                             key=lambda s: [int(c) if c.isdigit() else c for c in re.split('([0-9]+)', s)]):
-            print('Working on file: {0}'.format(os.path.basename(mbtile)))
-            # construct level folder name from .mbtile file name
-            level = 'L' + '{:02d}'.format(int(os.path.splitext(os.path.basename(mbtile))[0]))
-            level_folder = os.path.join(cache_output_folder, level)
-            # get the level as int for later calculations
-            level_int = int(os.path.splitext(os.path.basename(mbtile))[0])
-            # Test if level-parameter is set
-            if level_param != -1 and level_param != level_int:
-                print('Level Parameter Set to {0} skipping\n'.format(level_param))
-                continue
+    print('Working on file: {0}'.format(os.path.basename(mb_tile_file)))
+    database = sqlite3.connect(mb_tile_file)
 
-            print('Bundles are written to folder: {0}'.format(level_folder))
-            output_path = level_folder
+    # create som indexes to speed up the process
+    crs = database.cursor()
+    print('Creating column index...')
+    crs.execute('CREATE INDEX IF NOT EXISTS column_idx ON tiles(tile_column)')
+    print('Creating zoom index...')
+    crs.execute('CREATE INDEX IF NOT EXISTS zoom_idx ON tiles(zoom_level)')
+    crs.close()
 
-            # create level folder if not exists
-            if not os.path.exists(level_folder):
-                os.makedirs(level_folder)
-            else:
-                # if exists, clean it up
-                for sub_root, sub_dirs, sub_files in os.walk(level_folder):
-                    for sub_dir in sub_dirs:
-                        shutil.rmtree(sub_dir)
-                    for sub_file in sub_files:
-                        os.remove(os.path.join(sub_root, sub_file))
+    #prepare output template
+    shutil.copytree(os.path.join(os.path.dirname(__file__), "..", "sample_template"), cache_output_folder, symlinks=False, ignore=None,  ignore_dangling_symlinks=False)
+    cache_output_folder = os.path.join(cache_output_folder, "A3_MyCachedService", "Layers", "_allayers")
 
-            # open the .mbtile as sqlite database
-            database_file = os.path.join(mb_tile_folder, mbtile)
-            database = sqlite3.connect(database_file)
+    #Loop each zoom level
+    print('Getting zoom levels to process...\t')
+    zoom_cursor = database.cursor()
+    zoom_cursor.execute('SELECT DISTINCT zoom_level FROM tiles')
+    for zoom in zoom_cursor:
+        level = 'L' + '{:02d}'.format(zoom[0])
+        print('Current level: {0}'.format(level))
+        level_folder = os.path.join(cache_output_folder, level)
 
-            # create som indexes to speed up the process
-            column_cursor = database.cursor()
-            print('Creating column index...')
-            column_cursor.execute('CREATE INDEX IF NOT EXISTS column_idx ON tiles(tile_column)')
+        # get the level as int for later calculations
+        level_int = int(zoom[0])
+        # Test if level-parameter is set
+        if level_param != -1 and level_param != level_int:
+            print('Level Parameter Set to {0} skipping\n'.format(level_param))
+            continue
 
-            # get the total number of columns to work on
-            # this in not necessary, used for timing info only
-            print('Getting total number of Tiles to process...\t')
-            number_of_columns = column_cursor.execute('SELECT count(distinct tile_column) FROM tiles').fetchone()[0]
-            number_of_tiles = column_cursor.execute('SELECT count(*) FROM tiles').fetchone()[0]
-            # print('Total number of Columns: {0}'.format(number_of_columns))
+        if max_level_param != -1 and max_level_param < level_int:
+            print('Max Level Parameter Set to {0} skipping\n'.format(level_param))
+            continue
 
-            # skipp level if there are not tiles to process in case of empty level, e.g. level 19
-            if not (number_of_columns and number_of_tiles):
-                print('Found no tiles to process, skipping level.')
-                continue
-            else:
-                print('Total number of Tiles: {0}'.format(number_of_tiles))
+        print('Bundles are written to folder: {0}'.format(level_folder))
+        output_path = level_folder
 
-            # loop over each column
-            column_cursor.execute('SELECT DISTINCT tile_column FROM tiles')
-            # start_time = time.time()
-            start_time = datetime.datetime.now()
-            current_column = 0
-            current_tile = 0
-            current_percent = float(current_column) / float(number_of_columns) * 100
-            print('  {0} % done - Time {1}'.format('{:3.2f}'.format(0),
-                                                   format(str(datetime.datetime.now().strftime("%m-%d-%Y %H:%M:%S")))))
-            for column in column_cursor:
-                current_column += 1
+        # create level folder if not exists
+        if not os.path.exists(level_folder):
+            os.makedirs(level_folder)
+        else:
+            # if exists, clean it up
+            for sub_root, sub_dirs, sub_files in os.walk(level_folder):
+                for sub_dir in sub_dirs:
+                    shutil.rmtree(sub_dir)
+                for sub_file in sub_files:
+                    os.remove(os.path.join(sub_root, sub_file))
 
-                # Process each row in sqlite database
-                row_cursor = database.cursor()
-                # calculate the maximum row number (there are 2^n rows and column at level n)
-                # row numbering in .mbtile is reversed, row n must be converted to (max_rows -1 ) - n
-                max_rows = 2 ** level_int - 1
-                row_cursor.execute('SELECT * FROM tiles WHERE tile_column=?', (column[0],))
-                for row in row_cursor:
-                    current_tile += 1
-                    if do_grayscale:
-                        add_tile_gray(row[3], max_rows - int(row[2]), int(column[0]))
-                    else:
-                        add_tile(row[3], max_rows - int(row[2]), int(column[0]))
+        column_cursor = database.cursor()
 
-                # calculate ETA
-                if current_column % 100 == 0:
-                    current_tile_time = (datetime.datetime.now() - start_time).total_seconds() / current_tile * (
-                                number_of_tiles - current_tile)  # seconds to reach 100% Tiles
-                    current_percent = current_tile / number_of_tiles * 100
-                    tiles_per_second = round((current_tile / (datetime.datetime.now() - start_time).total_seconds()), 2)
-                    print(' {0} % done - Time {1} | ETA {2} | Tiles per Second {3}'.format(
-                        '{:3.2f}'.format(current_percent),
-                        format(str(datetime.datetime.now().strftime("%m-%d-%Y %H:%M:%S"))), str(
-                            (datetime.datetime.now() + datetime.timedelta(0, current_tile_time)).strftime(
-                                "%m-%d-%Y %H:%M:%S")), format(tiles_per_second)))
+        print('Getting total number of Tiles to process...\t')
+        number_of_columns = column_cursor.execute('SELECT count(distinct tile_column) FROM tiles where zoom_level={0}'.format(zoom[0])).fetchone()[0]
+        number_of_tiles = column_cursor.execute('SELECT count(*) FROM tiles where zoom_level={0}'.format(zoom[0])).fetchone()[0]
+        # print('Total number of Columns: {0}'.format(number_of_columns))
 
-            # close the database when finished
-            database.close()
-            # final output
-            current_tile_time = (datetime.datetime.now() - start_time).total_seconds() / current_tile * (
+        # skipp level if there are not tiles to process in case of empty level, e.g. level 19
+        if not (number_of_columns and number_of_tiles):
+            print('Found no tiles to process, skipping level.')
+            continue
+        else:
+            print('Total number of Tiles: {0}'.format(number_of_tiles))
+
+        # loop over each column
+        column_cursor.execute('SELECT DISTINCT tile_column FROM tiles where zoom_level={0}'.format(zoom[0]))
+        # start_time = time.time()
+        start_time = datetime.datetime.now()
+        current_column = 0
+        current_tile = 0
+        current_percent = float(current_column) / float(number_of_columns) * 100
+        print('  {0} % done - Time {1}'.format('{:3.2f}'.format(0),
+                                               format(str(datetime.datetime.now().strftime("%m-%d-%Y %H:%M:%S")))))
+        for column in column_cursor:
+            current_column += 1
+
+            # Process each row in sqlite database
+            row_cursor = database.cursor()
+            # calculate the maximum row number (there are 2^n rows and column at level n)
+            # row numbering in .mbtile is reversed, row n must be converted to (max_rows -1 ) - n
+            max_rows = 2 ** level_int - 1
+            row_cursor.execute('SELECT * FROM tiles WHERE tile_column=? and zoom_level={0}'.format(zoom[0]), (column[0],))
+            for row in row_cursor:
+                current_tile += 1
+                if do_grayscale:
+                    add_tile_gray(row[3], max_rows - int(row[2]), int(column[0]))
+                else:
+                    add_tile(row[3], max_rows - int(row[2]), int(column[0]))
+
+            # calculate ETA
+            if current_column % 100 == 0:
+                current_tile_time = (datetime.datetime.now() - start_time).total_seconds() / current_tile * (
                         number_of_tiles - current_tile)  # seconds to reach 100% Tiles
-            current_percent = current_tile / number_of_tiles * 100
-            try:
+                current_percent = current_tile / number_of_tiles * 100
                 tiles_per_second = round((current_tile / (datetime.datetime.now() - start_time).total_seconds()), 2)
-            except:
-                tiles_per_second = 999999
-            print('{0} % done - Time {1} | ETA {2} | Tiles per Second {3}\n'.format('{:3.2f}'.format(current_percent),
-                                                                                    format(str(
-                                                                                        datetime.datetime.now().strftime(
-                                                                                            "%m-%d-%Y %H:%M:%S"))), str(
-                    (datetime.datetime.now() + datetime.timedelta(0, current_tile_time)).strftime("%m-%d-%Y %H:%M:%S")),
-                                                                                    format(tiles_per_second)))
-            # cleanup open bundles
-            cleanup()
+                print(' {0} % done - Time {1} | ETA {2} | Tiles per Second {3}'.format(
+                    '{:3.2f}'.format(current_percent),
+                    format(str(datetime.datetime.now().strftime("%m-%d-%Y %H:%M:%S"))), str(
+                        (datetime.datetime.now() + datetime.timedelta(0, current_tile_time)).strftime(
+                            "%m-%d-%Y %H:%M:%S")), format(tiles_per_second)))
+
+        # final output
+        current_tile_time = (datetime.datetime.now() - start_time).total_seconds() / current_tile * (
+                number_of_tiles - current_tile)  # seconds to reach 100% Tiles
+        current_percent = current_tile / number_of_tiles * 100
+        try:
+            tiles_per_second = round((current_tile / (datetime.datetime.now() - start_time).total_seconds()), 2)
+        except:
+            tiles_per_second = 999999
+        print('{0} % done - Time {1} | ETA {2} | Tiles per Second {3}\n'.format('{:3.2f}'.format(current_percent),
+                                                                                format(str(
+                                                                                    datetime.datetime.now().strftime(
+                                                                                        "%m-%d-%Y %H:%M:%S"))), str(
+                (datetime.datetime.now() + datetime.timedelta(0, current_tile_time)).strftime("%m-%d-%Y %H:%M:%S")),
+                                                                                format(tiles_per_second)))
+        # cleanup open bundles
+        cleanup()
+
+    # close the database when finished
+    database.close()
 
 
 if __name__ == '__main__':
