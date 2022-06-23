@@ -93,6 +93,8 @@ curr_bname = None
 curr_offset = int(0)
 # max size of a tile in the current bundle
 curr_max = 0
+# how much records to read per request
+rec_per_request=100000
 
 
 def get_arguments():
@@ -190,8 +192,9 @@ def open_bundle(row, col):
     # bname = "R%(r)04xC%(c)04x" % {"r": start_row, "c": start_col}
 
     # If the name matches the current bundle, nothing to do
-    if bname == curr_bname:
-        return
+    if curr_bname is not None:
+        if os.path.join(output_path, bname) == curr_bundle:
+            return
 
     # Close the current bundle, if it exists
     cleanup()
@@ -297,17 +300,62 @@ def main(arguments):
     print('Working on file: {0}'.format(os.path.basename(mb_tile_file)))
     database = sqlite3.connect(mb_tile_file)
 
-    # create som indexes to speed up the process
-    crs = database.cursor()
-    print('Creating column index...')
-    crs.execute('CREATE INDEX IF NOT EXISTS column_idx ON tiles(tile_column)')
-    print('Creating zoom index...')
-    crs.execute('CREATE INDEX IF NOT EXISTS zoom_idx ON tiles(zoom_level)')
-    crs.close()
-
     #prepare output template
     shutil.copytree(os.path.join(os.path.dirname(__file__), "..", "sample_template"), cache_output_folder, symlinks=False, ignore=None,  ignore_dangling_symlinks=False)
-    cache_output_folder = os.path.join(cache_output_folder, "A3_MyCachedService", "Layers", "_allayers")
+    cache_output_folder = os.path.join(cache_output_folder, "A3_MyCachedService", "Layers", "_alllayers")
+
+    # sequetially loop the data
+    print('Exporting {0} rows at a time \t'.format(rec_per_request))
+    print(' \t')
+    row_cursor = database.cursor()
+
+    start = 0
+
+    while True:
+        sql = 'SELECT * FROM tiles where rowid > {0} limit {1}'.format(start, rec_per_request)
+        #print(sql)
+        row_cursor.execute(sql)
+        print('Treating rows: {0} to {1}'.format(start + 1, start + rec_per_request))
+        start += rec_per_request
+        current_tile = 0
+        has_data = False
+        for row in row_cursor:
+            has_data = True
+            current_tile += 1
+            level = 'L' + '{:02d}'.format(row[0])
+            #print('Current level: {0}'.format(level))
+            level_folder = os.path.join(cache_output_folder, level)
+
+            # get the level as int for later calculations
+            level_int = int(row[0])
+            # Test if level-parameter is set
+            if level_param != -1 and level_param != level_int:
+                #print('Level Parameter Set to {0} skipping\n'.format(level_param))
+                continue
+
+            if max_level_param != -1 and max_level_param < level_int:
+                #print('Max Level Parameter Set to {0} skipping\n'.format(level_param))
+                continue
+
+            #print('Bundles are written to folder: {0}'.format(level_folder))
+            output_path = level_folder
+
+            # create level folder if not exists
+            if not os.path.exists(level_folder):
+                os.makedirs(level_folder)
+
+            max_rows = 2 ** int(row[0]) - 1
+
+            if do_grayscale:
+                add_tile_gray(row[3], max_rows - int(row[2]), int(row[1]))
+            else:
+                add_tile(row[3], max_rows - int(row[2]), int(row[1]))
+
+        if not has_data:
+            break
+
+    exit()
+
 
     #Loop each zoom level
     print('Getting zoom levels to process...\t')
@@ -383,31 +431,31 @@ def main(arguments):
                     add_tile(row[3], max_rows - int(row[2]), int(column[0]))
 
             # calculate ETA
-            # if current_column % 100 == 0:
-            #     current_tile_time = (datetime.datetime.now() - start_time).total_seconds() / current_tile * (
-            #             number_of_tiles - current_tile)  # seconds to reach 100% Tiles
-            #     current_percent = current_tile / number_of_tiles * 100
-            #     tiles_per_second = round((current_tile / (datetime.datetime.now() - start_time).total_seconds()), 2)
-            #     print(' {0} % done - Time {1} | ETA {2} | Tiles per Second {3}'.format(
-            #         '{:3.2f}'.format(current_percent),
-            #         format(str(datetime.datetime.now().strftime("%m-%d-%Y %H:%M:%S"))), str(
-            #             (datetime.datetime.now() + datetime.timedelta(0, current_tile_time)).strftime(
-            #                 "%m-%d-%Y %H:%M:%S")), format(tiles_per_second)))
+            if current_column % 100 == 0:
+                current_tile_time = (datetime.datetime.now() - start_time).total_seconds() / current_tile * (
+                        number_of_tiles - current_tile)  # seconds to reach 100% Tiles
+                current_percent = current_tile / number_of_tiles * 100
+                tiles_per_second = round((current_tile / (datetime.datetime.now() - start_time).total_seconds()), 2)
+                print(' {0} % done - Time {1} | ETA {2} | Tiles per Second {3}'.format(
+                    '{:3.2f}'.format(current_percent),
+                    format(str(datetime.datetime.now().strftime("%m-%d-%Y %H:%M:%S"))), str(
+                        (datetime.datetime.now() + datetime.timedelta(0, current_tile_time)).strftime(
+                            "%m-%d-%Y %H:%M:%S")), format(tiles_per_second)))
 
         # final output
-        # current_tile_time = (datetime.datetime.now() - start_time).total_seconds() / current_tile * (
-        #         number_of_tiles - current_tile)  # seconds to reach 100% Tiles
-        # current_percent = current_tile / number_of_tiles * 100
-        # try:
-        #     tiles_per_second = round((current_tile / (datetime.datetime.now() - start_time).total_seconds()), 2)
-        # except:
-        #     tiles_per_second = 999999
-        # print('{0} % done - Time {1} | ETA {2} | Tiles per Second {3}\n'.format('{:3.2f}'.format(current_percent),
-        #                                                                         format(str(
-        #                                                                             datetime.datetime.now().strftime(
-        #                                                                                 "%m-%d-%Y %H:%M:%S"))), str(
-        #         (datetime.datetime.now() + datetime.timedelta(0, current_tile_time)).strftime("%m-%d-%Y %H:%M:%S")),
-        #                                                                         format(tiles_per_second)))
+        current_tile_time = (datetime.datetime.now() - start_time).total_seconds() / current_tile * (
+                number_of_tiles - current_tile)  # seconds to reach 100% Tiles
+        current_percent = current_tile / number_of_tiles * 100
+        try:
+            tiles_per_second = round((current_tile / (datetime.datetime.now() - start_time).total_seconds()), 2)
+        except:
+            tiles_per_second = 999999
+        print('{0} % done - Time {1} | ETA {2} | Tiles per Second {3}\n'.format('{:3.2f}'.format(current_percent),
+                                                                                format(str(
+                                                                                    datetime.datetime.now().strftime(
+                                                                                        "%m-%d-%Y %H:%M:%S"))), str(
+                (datetime.datetime.now() + datetime.timedelta(0, current_tile_time)).strftime("%m-%d-%Y %H:%M:%S")),
+                                                                                format(tiles_per_second)))
         # cleanup open bundles
         cleanup()
 
