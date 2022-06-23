@@ -94,7 +94,7 @@ curr_offset = int(0)
 # max size of a tile in the current bundle
 curr_max = 0
 # how much records to read per request
-rec_per_request=100000
+rec_per_request = 1000000
 
 
 def get_arguments():
@@ -193,8 +193,11 @@ def open_bundle(row, col):
 
     # If the name matches the current bundle, nothing to do
     if curr_bname is not None:
-        if os.path.join(output_path, bname) == curr_bundle:
+        b = os.path.join(output_path, bname + ".bundle")
+        if b == curr_bundle.name:
             return
+        #else:
+        #    print("Opening {0}".format(os.path.join(output_path, bname + ".bundle")))
 
     # Close the current bundle, if it exists
     cleanup()
@@ -308,12 +311,15 @@ def main(arguments):
     print('Exporting {0} rows at a time \t'.format(rec_per_request))
     print(' \t')
     row_cursor = database.cursor()
-
+    number_of_tiles = row_cursor.execute('SELECT max(rowid) FROM tiles').fetchone()[0]
     start = 0
-
-    while True:
+    treated_tiles = 0
+    while treated_tiles < number_of_tiles:
         sql = 'SELECT * FROM tiles where rowid > {0} limit {1}'.format(start, rec_per_request)
-        #print(sql)
+        if level_param != -1:
+            sql = 'SELECT * FROM (SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles where rowid > {0} limit {1}) WHERE zoom_level = {2}'.format(start, rec_per_request, level_param)
+        if max_level_param != -1:
+            sql = 'SELECT * FROM (SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles where rowid > {0} limit {1}) WHERE zoom_level <= {2}'.format(start, rec_per_request, max_level_param)
         row_cursor.execute(sql)
         print('Treating rows: {0} to {1}'.format(start + 1, start + rec_per_request))
         start += rec_per_request
@@ -325,139 +331,25 @@ def main(arguments):
             level = 'L' + '{:02d}'.format(row[0])
             #print('Current level: {0}'.format(level))
             level_folder = os.path.join(cache_output_folder, level)
-
-            # get the level as int for later calculations
-            level_int = int(row[0])
-            # Test if level-parameter is set
-            if level_param != -1 and level_param != level_int:
-                #print('Level Parameter Set to {0} skipping\n'.format(level_param))
-                continue
-
-            if max_level_param != -1 and max_level_param < level_int:
-                #print('Max Level Parameter Set to {0} skipping\n'.format(level_param))
-                continue
-
-            #print('Bundles are written to folder: {0}'.format(level_folder))
             output_path = level_folder
-
             # create level folder if not exists
             if not os.path.exists(level_folder):
                 os.makedirs(level_folder)
-
             max_rows = 2 ** int(row[0]) - 1
-
             if do_grayscale:
                 add_tile_gray(row[3], max_rows - int(row[2]), int(row[1]))
             else:
                 add_tile(row[3], max_rows - int(row[2]), int(row[1]))
 
-        if not has_data:
-            break
+        treated_tiles += rec_per_request
+        print('Treated tiles {0}'.format(treated_tiles))
+        print('Treated tiles {:3.2f}%'.format(treated_tiles/number_of_tiles*100))
 
-    exit()
+        #if not has_data:
+        #    break
 
-
-    #Loop each zoom level
-    print('Getting zoom levels to process...\t')
-    zoom_cursor = database.cursor()
-    zoom_cursor.execute('SELECT DISTINCT zoom_level FROM tiles')
-    for zoom in zoom_cursor:
-        level = 'L' + '{:02d}'.format(zoom[0])
-        print('Current level: {0}'.format(level))
-        level_folder = os.path.join(cache_output_folder, level)
-
-        # get the level as int for later calculations
-        level_int = int(zoom[0])
-        # Test if level-parameter is set
-        if level_param != -1 and level_param != level_int:
-            print('Level Parameter Set to {0} skipping\n'.format(level_param))
-            continue
-
-        if max_level_param != -1 and max_level_param < level_int:
-            print('Max Level Parameter Set to {0} skipping\n'.format(level_param))
-            continue
-
-        print('Bundles are written to folder: {0}'.format(level_folder))
-        output_path = level_folder
-
-        # create level folder if not exists
-        if not os.path.exists(level_folder):
-            os.makedirs(level_folder)
-        else:
-            # if exists, clean it up
-            for sub_root, sub_dirs, sub_files in os.walk(level_folder):
-                for sub_dir in sub_dirs:
-                    shutil.rmtree(sub_dir)
-                for sub_file in sub_files:
-                    os.remove(os.path.join(sub_root, sub_file))
-
-        column_cursor = database.cursor()
-
-        print('Getting total number of Tiles to process...\t')
-        number_of_columns = column_cursor.execute('SELECT count(distinct tile_column) FROM tiles where zoom_level={0}'.format(zoom[0])).fetchone()[0]
-        number_of_tiles = column_cursor.execute('SELECT count(*) FROM tiles where zoom_level={0}'.format(zoom[0])).fetchone()[0]
-        # print('Total number of Columns: {0}'.format(number_of_columns))
-
-        # skipp level if there are not tiles to process in case of empty level, e.g. level 19
-        if not (number_of_columns and number_of_tiles):
-            print('Found no tiles to process, skipping level.')
-            continue
-        else:
-            print('Total number of Tiles: {0}'.format(number_of_tiles))
-
-        # loop over each column
-        column_cursor.execute('SELECT DISTINCT tile_column FROM tiles where zoom_level={0}'.format(zoom[0]))
-        # start_time = time.time()
-        start_time = datetime.datetime.now()
-        current_column = 0
-        current_tile = 0
-        current_percent = float(current_column) / float(number_of_columns) * 100
-        print('  {0} % done - Time {1}'.format('{:3.2f}'.format(0),
-                                               format(str(datetime.datetime.now().strftime("%m-%d-%Y %H:%M:%S")))))
-        for column in column_cursor:
-            current_column += 1
-
-            # Process each row in sqlite database
-            row_cursor = database.cursor()
-            # calculate the maximum row number (there are 2^n rows and column at level n)
-            # row numbering in .mbtile is reversed, row n must be converted to (max_rows -1 ) - n
-            max_rows = 2 ** level_int - 1
-            row_cursor.execute('SELECT * FROM tiles WHERE tile_column=? and zoom_level={0}'.format(zoom[0]), (column[0],))
-            for row in row_cursor:
-                current_tile += 1
-                if do_grayscale:
-                    add_tile_gray(row[3], max_rows - int(row[2]), int(column[0]))
-                else:
-                    add_tile(row[3], max_rows - int(row[2]), int(column[0]))
-
-            # calculate ETA
-            if current_column % 100 == 0:
-                current_tile_time = (datetime.datetime.now() - start_time).total_seconds() / current_tile * (
-                        number_of_tiles - current_tile)  # seconds to reach 100% Tiles
-                current_percent = current_tile / number_of_tiles * 100
-                tiles_per_second = round((current_tile / (datetime.datetime.now() - start_time).total_seconds()), 2)
-                print(' {0} % done - Time {1} | ETA {2} | Tiles per Second {3}'.format(
-                    '{:3.2f}'.format(current_percent),
-                    format(str(datetime.datetime.now().strftime("%m-%d-%Y %H:%M:%S"))), str(
-                        (datetime.datetime.now() + datetime.timedelta(0, current_tile_time)).strftime(
-                            "%m-%d-%Y %H:%M:%S")), format(tiles_per_second)))
-
-        # final output
-        current_tile_time = (datetime.datetime.now() - start_time).total_seconds() / current_tile * (
-                number_of_tiles - current_tile)  # seconds to reach 100% Tiles
-        current_percent = current_tile / number_of_tiles * 100
-        try:
-            tiles_per_second = round((current_tile / (datetime.datetime.now() - start_time).total_seconds()), 2)
-        except:
-            tiles_per_second = 999999
-        print('{0} % done - Time {1} | ETA {2} | Tiles per Second {3}\n'.format('{:3.2f}'.format(current_percent),
-                                                                                format(str(
-                                                                                    datetime.datetime.now().strftime(
-                                                                                        "%m-%d-%Y %H:%M:%S"))), str(
-                (datetime.datetime.now() + datetime.timedelta(0, current_tile_time)).strftime("%m-%d-%Y %H:%M:%S")),
-                                                                                format(tiles_per_second)))
-        # cleanup open bundles
-        cleanup()
+    # cleanup open bundles
+    cleanup()
 
     # close the database when finished
     database.close()
