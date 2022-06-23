@@ -193,8 +193,11 @@ def open_bundle(row, col):
 
     # If the name matches the current bundle, nothing to do
     if curr_bname is not None:
-        if os.path.join(output_path, bname) == curr_bundle:
+        b = os.path.join(output_path, bname + ".bundle")
+        if b == curr_bundle.name:
             return
+        else:
+            print("Opening {0}".format(os.path.join(output_path, bname + ".bundle")))
 
     # Close the current bundle, if it exists
     cleanup()
