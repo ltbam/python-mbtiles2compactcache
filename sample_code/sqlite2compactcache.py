@@ -314,6 +314,8 @@ def main(arguments):
     number_of_tiles = row_cursor.execute('SELECT max(rowid) FROM tiles').fetchone()[0]
     start = 0
     treated_tiles = 0
+    start_time = datetime.datetime.now()
+    lvl_dict = {}
     while treated_tiles < number_of_tiles:
         sql = 'SELECT * FROM tiles where rowid > {0} limit {1}'.format(start, rec_per_request)
         if level_param != -1:
@@ -321,7 +323,7 @@ def main(arguments):
         if max_level_param != -1:
             sql = 'SELECT * FROM (SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles where rowid > {0} limit {1}) WHERE zoom_level <= {2}'.format(start, rec_per_request, max_level_param)
         row_cursor.execute(sql)
-        print('Treating rows: {0} to {1}'.format(start + 1, start + rec_per_request))
+        #print('Treating rows: {0} to {1}'.format(start + 1, start + rec_per_request))
         start += rec_per_request
         current_tile = 0
         has_data = False
@@ -330,11 +332,14 @@ def main(arguments):
             current_tile += 1
             level = 'L' + '{:02d}'.format(row[0])
             #print('Current level: {0}'.format(level))
-            level_folder = os.path.join(cache_output_folder, level)
-            output_path = level_folder
+
+            output_path = os.path.join(cache_output_folder, level)
             # create level folder if not exists
-            if not os.path.exists(level_folder):
-                os.makedirs(level_folder)
+            if not row[0] in lvl_dict:
+                lvl_dict[row[0]] = output_path
+                if not os.path.exists(output_path):
+                    os.makedirs(output_path)
+
             max_rows = 2 ** int(row[0]) - 1
             if do_grayscale:
                 add_tile_gray(row[3], max_rows - int(row[2]), int(row[1]))
@@ -342,8 +347,9 @@ def main(arguments):
                 add_tile(row[3], max_rows - int(row[2]), int(row[1]))
 
         treated_tiles += rec_per_request
-        print('Treated tiles {0}'.format(treated_tiles))
-        print('Treated tiles {:3.2f}%'.format(treated_tiles/number_of_tiles*100))
+        current_tile_time = (datetime.datetime.now() - start_time).total_seconds() / treated_tiles * (
+                        number_of_tiles - treated_tiles) / 3600  # hours to reach 100% Tiles
+        print('Treated tiles {:3.2f}% - {:3.2f} hours left.'.format(treated_tiles/number_of_tiles*100, current_tile_time))
 
         #if not has_data:
         #    break
