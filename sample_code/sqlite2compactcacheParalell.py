@@ -95,7 +95,7 @@ curr_offset = int(0)
 # max size of a tile in the current bundle
 curr_max = 0
 # how much records to read per request
-rec_per_request = 1000000
+rec_per_request = 100
 
 
 def get_arguments():
@@ -368,7 +368,7 @@ def main(arguments):
     treated_tiles = 0
     start_time = datetime.datetime.now()
 
-    p_jobs = 1
+    p_jobs = 10
 
     from multiprocessing import Pool
     pool = Pool(p_jobs)
