@@ -3,25 +3,22 @@
 
 ## Compact Cache V2 sample code
 
-### mbtiles2compactcache.py
+### mbtilesRaster2compactcache.py
 
-Convert individual .mbtile files to the [Esri Compact Cache V2](./CompactCacheV2.md) format bundles.  It only builds individual bundles, not a completely functional cache.
+Convert a single .mbtile raster dataset file to the [Esri Compact Cache V2](./CompactCacheV2.md) format bundles. It only builds a completely functional cache. This script is designed to export large to huge raster dataset mbtiles. the export occurs using multiple threads reading all records sequentially.
 
-While operational, this code is only provided as an example of how a bundle file is created and updated.
-This Python script takes two arguments, the input mbtile folder and the output folder. It assumes that the input folder contains mbtile files of the form: ```\<level#>.mbtile```.
+Requirement:
+- data must be in Web Mercator (EPSG:3857) 
+- the tiles table must be a rowid table.
 
 The script does not check the input tile format, and assumes that all the files under the source contain valid SQLLite databases with tiles in MBTiles format. 
-The algorithm loops over files, inserting each tile in the appropriate bundle. It keeps one bundle open in case the next tile fits in the same bundle.  In most cases this combination results in good performance.
+The algorithm loops over the records, inserting each tile in the appropriate bundle. Each thread writes its records in a bundle and then close it.
 
-The [sample_mbtiles](./sample_mbtiles) folder contains example [MBTiles](./sample_mbtiles/README.md) the form of SQLite databases for the single zoom levels for the first three level of the Federal Agency for Cartography and Geodesy - TopPlusOpen cache in Web Mercator projection.  The [sample_cache] (../sample_cache) folder contains a Compact Cache V2 cache produced from these individual mbtiles using the mbtiles2compactcache.py script. The commands used to generate the bundles for each level are:
+The [file](./file) folder contains example [MBTiles]
+The [cache] (../cache) folder contains a Compact Cache V2 cache produced as result of the mbtilesRaster2compactcache.py script. The commands used to generate the cache is:
 
-RGB processing:
 ```console
-python sample_code\mbtiles2compactcache.py -i sample_mbtiles -o sample_cache\_alllayers
-```
-Grayscale processing:
-```console
-python sample_code\mbtiles2compactcache.py -i sample_mbtiles -o sample_cache\_alllayers -g
+python .\code\mbtilesRaster2compactcache.py -ml 15 -i .\file\countries-raster.mbtiles -o .\cache
 ```
 
 ## Documentation and sample code for Esri Compact Cache V2 format
@@ -34,7 +31,7 @@ The Compact Cache V2 is the current file format used by ArcGIS to store raster t
 | Row 1 | Row 1 Col 0 | Row 1 Col 1 |
 
 ## Content
-This repository contains [documentation](CompactCacheV2.md), a [sample cache](sample_cache) and a Python 2.x [code example](sample_code) of how to build Compact Cache V2 bundles from MBTiles.
+This repository contains [documentation](CompactCacheV2.md), a [cache](cache) and a Python 3.x [code example](code) of how to build Compact Cache V2 bundles from MBTiles.
 
 ## Licensing
 
