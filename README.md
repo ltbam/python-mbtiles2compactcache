@@ -15,7 +15,7 @@ The script does not check the input tile format, and assumes that all the files 
 The algorithm loops over the records, inserting each tile in the appropriate bundle. Each thread writes its records in a bundle and then close it.
 
 The [file](./file) folder contains example [MBTiles]
-The [cache] (../cache) folder contains a Compact Cache V2 cache produced as result of the mbtilesRaster2compactcache.py script. The commands used to generate the cache is:
+The [cache] (./cache) folder contains a Compact Cache V2 cache produced as result of the mbtilesRaster2compactcache.py script. The commands used to generate the cache is:
 
 ```console
 python .\code\mbtilesRaster2compactcache.py -ml 15 -i .\file\countries-raster.mbtiles -o .\cache
