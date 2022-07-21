@@ -1,7 +1,7 @@
 # python-mbtiles2compactcache
 (credits: https://github.com/Esri/raster-tiles-compactcache)
 
-## Compact Cache V2 sample code
+## Compact Cache V2
 
 ### mbtilesRaster2compactcache.py
 
