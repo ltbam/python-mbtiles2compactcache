@@ -71,7 +71,7 @@ class Bundle:
         self.init_content()
 
     def init_content(self):
-        #print("t {0}: initializing: {1}".format(get_ident(), self.file_name))
+        # print("t {0}: initializing: {1}".format(get_ident(), self.file_name))
         self.fd = open(self.file_name, "wb")
         # Empty bundle file header, lots of magic numbers
         header = struct.pack("<4I3Q6I",
@@ -94,7 +94,7 @@ class Bundle:
         self.fd.write(struct.pack("<{}Q".format(Bundle.BSZ2), *((0,) * Bundle.BSZ2)))
         self.fd.close()
         self.fd = None
-        #time.sleep(0.2)
+        # time.sleep(0.2)
 
     def open(self):
         # Open the bundle
@@ -135,7 +135,7 @@ class Bundle:
         self.fd.close()
         self.fd = None
         # print("t {0}: cleaned up: {1}".format(get_ident(), self.file_name))
-        #time.sleep(0.2)
+        # time.sleep(0.2)
 
 
 class BundleManager:
@@ -155,7 +155,7 @@ class BundleManager:
             sql = 'SELECT * FROM (SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles where rowid > {0} limit ' \
                   '{1}) WHERE zoom_level <= {2}'.format(start, Application.rec_per_request, max_level_param)
 
-        #print(sql)
+        # print(sql)
 
         database = sqlite3.connect(mb_tile_file)
         row_cursor = database.cursor()
@@ -207,13 +207,13 @@ class BundleManager:
                     tile_size = len(t[1])
                     row = t[2]
                     col = t[3]
-                    #print("add tile row:{0} col:{1} buff:{2} path:{3}".format(row, col, tile_size, bundle))
+                    # print("add tile row:{0} col:{1} buff:{2} path:{3}".format(row, col, tile_size, bundle))
                     # Open or create it, seek to end of bundle file
                     BundleManager.b_list[bundle].write_tile(tile, tile_size, row, col)
 
                 BundleManager.b_list[bundle].cleanup()
 
-            #print("t {0}: left lock: {1}".format(get_ident(), bundle))
+            # print("t {0}: left lock: {1}".format(get_ident(), bundle))
 
     @staticmethod
     def add_tile(output_path, byte_buffer, row, col=None):
@@ -335,7 +335,8 @@ def main():
         t_arr = {}
         r_arr = {}
         for i in range(app.p_jobs):
-            t_arr[i] = Thread(target=BundleManager.process, args=(start + (app.rec_per_request * i), r_arr, i, arguments))
+            t_arr[i] = Thread(target=BundleManager.process,
+                              args=(start + (app.rec_per_request * i), r_arr, i, arguments))
             t_arr[i].start()
             t_arr[i].join()
 
@@ -343,10 +344,13 @@ def main():
             treated_tiles += r_arr[res]
             start += app.rec_per_request
 
-        current_tile_time = (datetime.datetime.now() - start_time).total_seconds() / treated_tiles * (
-                number_of_tiles - treated_tiles) / 3600  # hours to reach 100% Tiles
-        print('Treated tiles {:3.2f}% - {:3.2f} hours left.'.format(treated_tiles / number_of_tiles * 100,
-                                                                    current_tile_time))
+        if treated_tiles > 0:
+            current_tile_time = (datetime.datetime.now() - start_time).total_seconds() / treated_tiles * (
+                        number_of_tiles - treated_tiles) / 3600
+            print('Treated tiles {:3.2f}% - {:3.2f} hours left.'.format(treated_tiles / number_of_tiles * 100,
+                                                                        current_tile_time))
+        else:
+            print('Treated tiles {:3.2f}'.format(treated_tiles))
 
 
 if __name__ == '__main__':

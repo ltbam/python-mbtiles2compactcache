@@ -18,7 +18,7 @@ The [file](./file) folder contains example [MBTiles]
 The [cache] (./cache) folder contains a Compact Cache V2 cache produced as result of the mbtilesRaster2compactcache.py script. The commands used to generate the cache is:
 
 ```console
-python .\code\mbtilesRaster2compactcache.py -ml 15 -i .\file\countries-raster.mbtiles -o .\cache
+python .\code\mbtilesRaster2compactcache.py -ml 15 -s .\file\countries-raster.mbtiles -d .\cache
 ```
 
 ## Documentation and sample code for Esri Compact Cache V2 format
