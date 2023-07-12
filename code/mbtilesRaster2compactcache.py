@@ -212,6 +212,8 @@ class BundleManager:
                     BundleManager.b_list[bundle].write_tile(tile, tile_size, row, col)
 
                 BundleManager.b_list[bundle].cleanup()
+                # free written bundle from mem.
+                del BundleManager.b_list[bundle]
 
             # print("t {0}: left lock: {1}".format(get_ident(), bundle))
 
