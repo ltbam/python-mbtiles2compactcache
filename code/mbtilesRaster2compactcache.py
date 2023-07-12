@@ -334,10 +334,15 @@ def main():
     while treated_tiles < number_of_tiles:
         t_arr = {}
         r_arr = {}
+        
+        # starting threads
         for i in range(app.p_jobs):
             t_arr[i] = Thread(target=BundleManager.process,
                               args=(start + (app.rec_per_request * i), r_arr, i, arguments))
             t_arr[i].start()
+            
+        # wait for threads before next round
+        for i in range(app.p_jobs):
             t_arr[i].join()
 
         for res in r_arr:
