@@ -47,6 +47,7 @@ import datetime
 import re
 import io
 import time
+import math
 
 from joblib import Parallel, delayed
 from threading import Lock, get_ident, Thread
@@ -60,6 +61,8 @@ class Bundle:
     BSZ2 = BSZ ** 2
     # Index size in bytes
     IDXSZ = BSZ2 * 8
+    # Max size
+    M = 2 ** 40
 
     def __init__(self, file_name):
         self.file_name = file_name
@@ -68,7 +71,14 @@ class Bundle:
         self.curr_index = []
         self.lock = Lock()
         self.fd = None
-        self.init_content()
+        regex = r"\_alllayers\\L(..)"
+        self.level = re.findall(regex, self.file_name)[0]
+        fname = self.file_name.split('.bundle')[0].split('\\')[-1]
+        s_val = fname[1:].split('C')
+        self.row_offset = int(s_val[0], 16)
+        self.col_offset = int(s_val[1], 16)
+        if not os.path.exists(self.file_name):
+            self.init_content()
 
     def init_content(self):
         # print("t {0}: initializing: {1}".format(get_ident(), self.file_name))
@@ -120,6 +130,55 @@ class Bundle:
         self.curr_offset += tile_size
         # Update the current bundle max tile size
         self.curr_max = max(self.curr_max, tile_size)
+
+    def listMissingTiles(self):
+        files = []
+        # Loop each Tile index and resolve if it has data
+        # range(0, 128) means 0-127
+        for row in range(0, 128):
+            startTile = 0
+            numTiles = 0
+            # count tiles with data, determine drawing center
+            for col in range(0, 128):
+                t_idx = self.curr_index[128 * row + col]
+                t_size = int(math.floor(t_idx / Bundle.M))
+                if t_size > 0:
+                    numTiles += 1
+                    if startTile == 0:
+                        startTile = col
+
+            if numTiles > 3:
+                data_started = False
+                mid_range = startTile + numTiles // 2
+                # print("lvl {} row {} mid_range: {}".format(self.level, row, mid_range))
+                # inspect from left
+                # range(0, 128) means 0-127
+                for col in range(0, mid_range):
+                    t_idx = self.curr_index[128 * row + col]
+                    t_size = int(math.floor(t_idx / Bundle.M))
+                    if data_started:
+                        if t_size == 0:
+                            absrow = self.row_offset + row
+                            abscol = self.col_offset + col
+                            files.append(dict(col=abscol, row=absrow, lvl=int(self.level)))
+                    else:
+                        if t_size != 0:
+                            data_started = True
+                data_started = False
+                # inspect from right
+                for col in range(127, mid_range - 1, -1):
+                    t_idx = self.curr_index[128 * row + col]
+                    t_size = int(math.floor(t_idx / Bundle.M))
+                    if data_started:
+                        if t_size == 0:
+                            absrow = self.row_offset + row
+                            abscol = self.col_offset + col
+                            files.append(dict(col=abscol, row=absrow, lvl=int(self.level)))
+                    else:
+                        if t_size != 0:
+                            data_started = True
+
+        return files
 
     def cleanup(self):
         """
@@ -261,8 +320,9 @@ class BundleManager:
 class Application:
     # Number of concurrent jobs for the export
     p_jobs = multiprocessing.cpu_count()
+    #p_jobs = 1
     # Records per request to be treated by a single thread
-    rec_per_request = 10000
+    rec_per_request = 500000
 
     def __init__(self):
         self.bm = BundleManager()
@@ -328,11 +388,10 @@ def main():
     start = 0
     treated_tiles = 0
     start_time = datetime.datetime.now()
-    if number_of_tiles > app.rec_per_request:
-        app.rec_per_request = int(number_of_tiles ** 0.65)
+    #if number_of_tiles > app.rec_per_request:
+    #    app.rec_per_request = int(number_of_tiles ** 0.65)
 
     print('Exporting {0} rows at a time within {1} threads.\t'.format(app.rec_per_request, app.p_jobs))
-
     while treated_tiles < number_of_tiles:
         t_arr = {}
         r_arr = {}
@@ -358,6 +417,21 @@ def main():
                                                                         current_tile_time))
         else:
             print('Treated tiles {:3.2f}'.format(treated_tiles))
+
+        print("Checking contiguous tiles in Bundle")
+        for path, subdirs, files in os.walk(cache_output_folder):
+            for name in files:
+                if "bundle" in name:
+                    print("checking bundle {}".format(name))
+                    bdl = Bundle(os.path.join(path, name))
+                    bdl.open()
+                    results = bdl.listMissingTiles()
+                    for res in results:
+                        print("Missing contiguous tile: level {}, row {}, col {}".format(res["lvl"], res["row"],
+                                                                                         res["col"]))
+                    # close bundle without writing anything
+                    bdl.fd.close()
+                    bdl.fd = None
 
 
 if __name__ == '__main__':
