@@ -9,7 +9,7 @@ Convert a single .mbtile raster dataset file to the [Esri Compact Cache V2](./Co
 
 Requirement:
 - data must be in Web Mercator (EPSG:3857) 
-- the tiles table must be a rowid table.
+- the tiles table must be a rowid table. (if the tiles table is a view, please add the rowid field to the view.)
 
 The script does not check the input tile format, and assumes that all the files under the source contain valid SQLLite databases with tiles in MBTiles format. 
 The algorithm loops over the records, inserting each tile in the appropriate bundle. Each thread writes its records in a bundle and then close it.
