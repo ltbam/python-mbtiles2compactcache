@@ -5,7 +5,7 @@
 
 ### mbtiles2compactcache.py
 
-Convert a single .mbtile raster dataset file to the [Esri Compact Cache V2](./CompactCacheV2.md) format bundles. It only builds a completely functional cache. This script is designed to export large to huge raster dataset mbtiles. the export occurs using multiple threads reading all records sequentially.
+Convert a single raster/vector tiles .mbtile file to the [Esri Compact Cache V2](./CompactCacheV2.md) format bundles. It only builds a completely functional cache. This script is designed to export large to huge raster dataset mbtiles. the export occurs using multiple threads reading all records sequentially.
 
 Requirement:
 - data must be in Web Mercator (EPSG:3857) 
