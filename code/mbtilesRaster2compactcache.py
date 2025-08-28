@@ -38,6 +38,7 @@
 #
 # Changeset
 # Version 1.0.0 ltbam
+
 import argparse
 import sqlite3
 import os
@@ -91,7 +92,7 @@ class Bundle:
                              5,  # Offset Size
                              0,  # Slack Space
                              64 + Bundle.IDXSZ,  # File Size
-                             40,  # User Header Offset
+                             40,  # User Header Offset.
                              20 + Bundle.IDXSZ,  # User Header Size
                              3,  # Legacy 1
                              16,  # Legacy 2
@@ -104,7 +105,6 @@ class Bundle:
         self.fd.write(struct.pack("<{}Q".format(Bundle.BSZ2), *((0,) * Bundle.BSZ2)))
         self.fd.close()
         self.fd = None
-        # time.sleep(0.2)
 
     def open(self):
         # Open the bundle
@@ -130,55 +130,6 @@ class Bundle:
         self.curr_offset += tile_size
         # Update the current bundle max tile size
         self.curr_max = max(self.curr_max, tile_size)
-
-    def listMissingTiles(self):
-        files = []
-        # Loop each Tile index and resolve if it has data
-        # range(0, 128) means 0-127
-        for row in range(0, 128):
-            startTile = 0
-            numTiles = 0
-            # count tiles with data, determine drawing center
-            for col in range(0, 128):
-                t_idx = self.curr_index[128 * row + col]
-                t_size = int(math.floor(t_idx / Bundle.M))
-                if t_size > 0:
-                    numTiles += 1
-                    if startTile == 0:
-                        startTile = col
-
-            if numTiles > 3:
-                data_started = False
-                mid_range = startTile + numTiles // 2
-                # print("lvl {} row {} mid_range: {}".format(self.level, row, mid_range))
-                # inspect from left
-                # range(0, 128) means 0-127
-                for col in range(0, mid_range):
-                    t_idx = self.curr_index[128 * row + col]
-                    t_size = int(math.floor(t_idx / Bundle.M))
-                    if data_started:
-                        if t_size == 0:
-                            absrow = self.row_offset + row
-                            abscol = self.col_offset + col
-                            files.append(dict(col=abscol, row=absrow, lvl=int(self.level)))
-                    else:
-                        if t_size != 0:
-                            data_started = True
-                data_started = False
-                # inspect from right
-                for col in range(127, mid_range - 1, -1):
-                    t_idx = self.curr_index[128 * row + col]
-                    t_size = int(math.floor(t_idx / Bundle.M))
-                    if data_started:
-                        if t_size == 0:
-                            absrow = self.row_offset + row
-                            abscol = self.col_offset + col
-                            files.append(dict(col=abscol, row=absrow, lvl=int(self.level)))
-                    else:
-                        if t_size != 0:
-                            data_started = True
-
-        return files
 
     def cleanup(self):
         """
@@ -214,7 +165,7 @@ class BundleManager:
             sql = 'SELECT * FROM (SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles where rowid > {0} limit ' \
                   '{1}) WHERE zoom_level <= {2}'.format(start, Application.rec_per_request, max_level_param)
 
-        # print(sql)
+        #print(sql)
 
         database = sqlite3.connect(mb_tile_file)
         row_cursor = database.cursor()
@@ -242,10 +193,10 @@ class BundleManager:
 
         row_cursor.close()
         database.close()
-
-        BundleManager.add_tiles(data, arguments.lock)
-
         results[index] = current_tile
+
+        if len(data) > 0:
+            BundleManager.add_tiles(data, arguments.lock)
 
     @staticmethod
     def add_tiles(data, lock):
@@ -320,7 +271,6 @@ class BundleManager:
 class Application:
     # Number of concurrent jobs for the export
     p_jobs = multiprocessing.cpu_count()
-    #p_jobs = 1
     # Records per request to be treated by a single thread
     rec_per_request = 500000
 
@@ -369,6 +319,8 @@ def main():
     print('Input file: {0}'.format(os.path.basename(mb_tile_file)))
 
     # prepare output template
+    if os.path.exists(cache_output_folder):
+        shutil.rmtree(cache_output_folder)
     shutil.copytree(os.path.join(os.path.dirname(__file__), "..", "template"), cache_output_folder,
                     symlinks=False, ignore=None, ignore_dangling_symlinks=False)
     cache_output_folder = os.path.join(cache_output_folder, "A3_MyCachedService", "Layers", "_alllayers")
@@ -383,13 +335,16 @@ def main():
     # get max records based on rowid
     database = sqlite3.connect(mb_tile_file)
     row_cursor = database.cursor()
-    number_of_tiles = row_cursor.execute('SELECT max(rowid) FROM tiles').fetchone()[0]
+
+    sql = 'SELECT max(rowid) FROM tiles'
+    if max_level_param != -1:
+        sql = sql + ' WHERE zoom_level <= {}'.format(max_level_param)
+
+    number_of_tiles = row_cursor.execute(sql).fetchone()[0]
     database.close()
     start = 0
     treated_tiles = 0
     start_time = datetime.datetime.now()
-    #if number_of_tiles > app.rec_per_request:
-    #    app.rec_per_request = int(number_of_tiles ** 0.65)
 
     print('Exporting {0} rows at a time within {1} threads.\t'.format(app.rec_per_request, app.p_jobs))
     while treated_tiles < number_of_tiles:
@@ -417,22 +372,6 @@ def main():
                                                                         current_tile_time))
         else:
             print('Treated tiles {:3.2f}'.format(treated_tiles))
-
-        print("Checking contiguous tiles in Bundle")
-        for path, subdirs, files in os.walk(cache_output_folder):
-            for name in files:
-                if "bundle" in name:
-                    print("checking bundle {}".format(name))
-                    bdl = Bundle(os.path.join(path, name))
-                    bdl.open()
-                    results = bdl.listMissingTiles()
-                    for res in results:
-                        print("Missing contiguous tile: level {}, row {}, col {}".format(res["lvl"], res["row"],
-                                                                                         res["col"]))
-                    # close bundle without writing anything
-                    bdl.fd.close()
-                    bdl.fd = None
-
 
 if __name__ == '__main__':
     main()
