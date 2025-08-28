@@ -28,7 +28,7 @@ import os
 import math
 
 
-cache_output_folder = r"\\v0t0081a.adr.admin.ch\p-dat\d4p\d_src\MGDI\A3\ChSwisstopoSwissimageProduct\20230524094759\cache"
+cache_output_folder = r"C:\Temp\osm\A3_MyCachedService\Layers"
 
 def main():
     print("Checking contiguous tiles in Bundle")
