@@ -3,7 +3,7 @@
 
 ## Compact Cache V2
 
-### mbtilesRaster2compactcache.py
+### mbtiles2compactcache.py
 
 Convert a single .mbtile raster dataset file to the [Esri Compact Cache V2](./CompactCacheV2.md) format bundles. It only builds a completely functional cache. This script is designed to export large to huge raster dataset mbtiles. the export occurs using multiple threads reading all records sequentially.
 
@@ -15,10 +15,10 @@ The script does not check the input tile format, and assumes that all the files 
 The algorithm loops over the records, inserting each tile in the appropriate bundle. Each thread writes its records in a bundle and then close it.
 
 The [file](./file) folder contains example [MBTiles]
-The [cache] (./cache) folder contains a Compact Cache V2 cache produced as result of the mbtilesRaster2compactcache.py script. The commands used to generate the cache is:
+The [cache] (./cache) folder contains a Compact Cache V2 cache produced as result of the mbtiles2compactcache.py script. The commands used to generate the cache is:
 
 ```console
-python .\code\mbtilesRaster2compactcache.py -ml 15 -s .\file\countries-raster.mbtiles -d .\cache
+python .\code\mbtiles2compactcache.py -ml 15 -s .\file\countries-raster.mbtiles -d .\cache
 ```
 
 ## Documentation and sample code for Esri Compact Cache V2 format
