@@ -160,10 +160,12 @@ class BundleManager:
         cache_output_folder = arguments.destination
         cache_output_folder = os.path.join(cache_output_folder, "A3_MyCachedService", "Layers", "_alllayers")
         max_level_param = arguments.max_level
-        sql = 'SELECT * FROM tiles where rowid > {0} limit {1}'.format(start, Application.rec_per_request)
+        sql = ('SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles '
+               'LIMIT {1} OFFSET {0}').format(start, Application.rec_per_request)
         if max_level_param != -1:
-            sql = 'SELECT * FROM (SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles where rowid > {0} limit ' \
-                  '{1}) WHERE zoom_level <= {2}'.format(start, Application.rec_per_request, max_level_param)
+            sql = ('SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles '
+                   'WHERE zoom_level <= {2} '
+                   'LIMIT {1} OFFSET {0}').format(start, Application.rec_per_request, max_level_param)
 
         #print(sql)
 
@@ -332,13 +334,12 @@ def main():
         if not os.path.exists(dir):
             os.makedirs(dir)
 
-    # get max records based on rowid
     database = sqlite3.connect(mb_tile_file)
     row_cursor = database.cursor()
 
-    sql = 'SELECT max(rowid) FROM tiles'
+    sql = 'SELECT COUNT(*) FROM tiles'
     if max_level_param != -1:
-        sql = sql + ' WHERE zoom_level <= {}'.format(max_level_param)
+        sql = 'SELECT COUNT(*) FROM tiles WHERE zoom_level <= {}'.format(max_level_param)
 
     number_of_tiles = row_cursor.execute(sql).fetchone()[0]
     database.close()
