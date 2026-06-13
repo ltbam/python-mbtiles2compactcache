@@ -50,7 +50,7 @@ import io
 import time
 import math
 
-from joblib import Parallel, delayed
+from queue import Queue
 from threading import Lock, get_ident, Thread
 import multiprocessing
 
@@ -72,7 +72,7 @@ class Bundle:
         self.curr_index = []
         self.lock = Lock()
         self.fd = None
-        regex = r"\_alllayers\\L(..)"
+        regex = r"L(..)"
         self.level = re.findall(regex, self.file_name)[0]
         fname = self.file_name.split('.bundle')[0].split('\\')[-1]
         s_val = fname[1:].split('C')
@@ -155,50 +155,70 @@ class BundleManager:
         pass
 
     @staticmethod
-    def process(start, results, index, arguments):
-        mb_tile_file = arguments.source
-        cache_output_folder = arguments.destination
-        cache_output_folder = os.path.join(cache_output_folder, "A3_MyCachedService", "Layers", "_alllayers")
-        max_level_param = arguments.max_level
-        sql = ('SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles '
-               'LIMIT {1} OFFSET {0}').format(start, Application.rec_per_request)
-        if max_level_param != -1:
-            sql = ('SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles '
-                   'WHERE zoom_level <= {2} '
-                   'LIMIT {1} OFFSET {0}').format(start, Application.rec_per_request, max_level_param)
-
-        #print(sql)
-
+    def fetch_worker(mb_tile_file, max_level, queue, num_workers):
+        """
+        Single thread that owns the DB cursor and feeds batches into the queue.
+        Uses fetchmany() for efficient streaming without OFFSET scanning.
+        """
         database = sqlite3.connect(mb_tile_file)
         row_cursor = database.cursor()
-        row_cursor.execute(sql)
-        current_tile = 0
-        data = {}
-        for rec in row_cursor:
-            current_tile += 1
-            level = 'L' + '{:02d}'.format(rec[0])
-            output_path = os.path.join(cache_output_folder, level)
-            max_rows = 2 ** int(rec[0]) - 1
-            tile = io.BytesIO(rec[3]).getvalue()
-            row = max_rows - int(rec[2])
-            col = int(rec[1])
 
-            # resolve the bundle
-            start_row = int(row / Bundle.BSZ) * Bundle.BSZ
-            start_col = int(col / Bundle.BSZ) * Bundle.BSZ
-            bname = "R{:04x}C{:04x}".format(start_row, start_col)
-            fname = os.path.join(output_path, bname + ".bundle")
+        if max_level != -1:
+            row_cursor.execute(
+                'SELECT zoom_level, tile_column, tile_row, tile_data '
+                'FROM tiles WHERE zoom_level <= ?', (max_level,)
+            )
+        else:
+            row_cursor.execute(
+                'SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles'
+            )
 
-            if fname not in data:
-                data[fname] = []
-            data[fname].append([fname, tile, row, col])
+        while True:
+            rows = row_cursor.fetchmany(Application.rec_per_request)
+            if not rows:
+                break
+            queue.put(rows)  # blocks naturally if workers are slow (backpressure)
+
+        # Poison pill: one per worker so each exits cleanly
+        for _ in range(num_workers):
+            queue.put(None)
 
         row_cursor.close()
         database.close()
-        results[index] = current_tile
 
-        if len(data) > 0:
-            BundleManager.add_tiles(data, arguments.lock)
+    @staticmethod
+    def process(queue, arguments):
+        """
+        Worker thread: pulls batches from the queue and writes bundle files.
+        Exits when it receives the None poison pill.
+        """
+
+        while True:
+            batch = queue.get()
+            if batch is None:  # poison pill — this worker is done
+                break
+
+            data = {}
+            for rec in batch:
+                level = 'L' + '{:02d}'.format(rec[0])
+                output_path = os.path.join(arguments.destination, level)
+                max_rows = 2 ** int(rec[0]) - 1
+                tile = io.BytesIO(rec[3]).getvalue()
+                row = max_rows - int(rec[2])
+                col = int(rec[1])
+
+                # Resolve the bundle
+                start_row = (row // Bundle.BSZ) * Bundle.BSZ
+                start_col = (col // Bundle.BSZ) * Bundle.BSZ
+                bname = "R{:04x}C{:04x}".format(start_row, start_col)
+                fname = os.path.join(output_path, bname + ".bundle")
+
+                if fname not in data:
+                    data[fname] = []
+                data[fname].append([fname, tile, row, col])
+
+            if data:
+                BundleManager.add_tiles(data, arguments.lock)
 
     @staticmethod
     def add_tiles(data, lock):
@@ -273,8 +293,10 @@ class BundleManager:
 class Application:
     # Number of concurrent jobs for the export
     p_jobs = multiprocessing.cpu_count()
-    # Records per request to be treated by a single thread
+    # Records per fetchmany() call — used as the streaming chunk size
     rec_per_request = 500000
+    # Queue depth: don't let the fetcher run too far ahead of workers
+    queue_maxsize = p_jobs * 2
 
     def __init__(self):
         self.bm = BundleManager()
@@ -323,9 +345,6 @@ def main():
     # prepare output template
     if os.path.exists(cache_output_folder):
         shutil.rmtree(cache_output_folder)
-    shutil.copytree(os.path.join(os.path.dirname(__file__), "..", "template"), cache_output_folder,
-                    symlinks=False, ignore=None, ignore_dangling_symlinks=False)
-    cache_output_folder = os.path.join(cache_output_folder, "A3_MyCachedService", "Layers", "_alllayers")
 
     # creating lvl directories
     for lvl in range(max_level_param + 1):
@@ -334,45 +353,34 @@ def main():
         if not os.path.exists(dir):
             os.makedirs(dir)
 
-    database = sqlite3.connect(mb_tile_file)
-    row_cursor = database.cursor()
-
-    sql = 'SELECT COUNT(*) FROM tiles'
-    if max_level_param != -1:
-        sql = 'SELECT COUNT(*) FROM tiles WHERE zoom_level <= {}'.format(max_level_param)
-
-    number_of_tiles = row_cursor.execute(sql).fetchone()[0]
-    database.close()
-    start = 0
-    treated_tiles = 0
     start_time = datetime.datetime.now()
 
-    print('Exporting {0} rows at a time within {1} threads.\t'.format(app.rec_per_request, app.p_jobs))
-    while treated_tiles < number_of_tiles:
-        t_arr = {}
-        r_arr = {}
-        
-        # starting threads
-        for i in range(app.p_jobs):
-            t_arr[i] = Thread(target=BundleManager.process,
-                              args=(start + (app.rec_per_request * i), r_arr, i, arguments))
-            t_arr[i].start()
-            
-        # wait for threads before next round
-        for i in range(app.p_jobs):
-            t_arr[i].join()
+    # One fetcher feeds all workers via a bounded queue (backpressure built-in)
+    queue = Queue(maxsize=Application.queue_maxsize)
 
-        for res in r_arr:
-            treated_tiles += r_arr[res]
-            start += app.rec_per_request
+    fetcher = Thread(
+        target=BundleManager.fetch_worker,
+        args=(mb_tile_file, max_level_param, queue, app.p_jobs)
+    )
+    workers = [
+        Thread(target=BundleManager.process, args=(queue, arguments))
+        for _ in range(app.p_jobs)
+    ]
 
-        if treated_tiles > 0:
-            current_tile_time = (datetime.datetime.now() - start_time).total_seconds() / treated_tiles * (
-                        number_of_tiles - treated_tiles) / 3600
-            print('Treated tiles {:3.2f}% - {:3.2f} hours left.'.format(treated_tiles / number_of_tiles * 100,
-                                                                        current_tile_time))
-        else:
-            print('Treated tiles {:3.2f}'.format(treated_tiles))
+    print('Exporting {0} rows at a time within {1} threads.'.format(
+        app.rec_per_request, app.p_jobs))
+
+    fetcher.start()
+    for w in workers:
+        w.start()
+
+    fetcher.join()
+    for w in workers:
+        w.join()
+
+    elapsed = (datetime.datetime.now() - start_time).total_seconds()
+    print('Done in {:.2f}s'.format(elapsed))
+
 
 if __name__ == '__main__':
     main()
