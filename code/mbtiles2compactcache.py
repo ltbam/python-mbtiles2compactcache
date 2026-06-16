@@ -315,8 +315,9 @@ class Application:
         parser.add_argument('-d', '--destination',
                             help='Output for level folders.', required=True)
         parser.add_argument('-ml', '--max_level',
-                            help='Do until this Level.', default=-1, type=int,
-                            required=True)
+                            help='Do until this Level. If omitted, the maximum zoom level '
+                                 'present in the MBTiles file is used automatically.',
+                            default=-1, type=int, required=False)
 
         # Return the command line arguments.
         arguments = parser.parse_args()
@@ -326,6 +327,47 @@ class Application:
             parser.error("Input folder does not exist or is inaccessible.")
 
         return arguments
+
+
+def get_max_level(mb_tile_file):
+    """
+    Resolve the maximum zoom level present in the MBTiles file.
+
+    Strategy (fastest-first, safe for very large files):
+      1. Check the 'metadata' table for the 'maxzoom' key — O(1) lookup,
+         no tile rows touched at all.
+      2. Fall back to SELECT MAX(zoom_level) FROM tiles — SQLite resolves
+         this via the index on (zoom_level, tile_column, tile_row) without
+         a full table scan.
+
+    :param mb_tile_file: path to the .mbtiles SQLite file
+    :return: integer max zoom level
+    :raises RuntimeError: if the level cannot be determined
+    """
+    db = sqlite3.connect(mb_tile_file)
+    try:
+        # 1. Fast path: metadata table
+        try:
+            cur = db.execute(
+                "SELECT value FROM metadata WHERE name = 'maxzoom' LIMIT 1"
+            )
+            row = cur.fetchone()
+            if row is not None:
+                return int(row[0])
+        except sqlite3.DatabaseError:
+            pass  # metadata table absent — fall through
+
+        # 2. Index-assisted MAX() scan on the tiles table
+        cur = db.execute("SELECT MAX(zoom_level) FROM tiles")
+        row = cur.fetchone()
+        if row is not None and row[0] is not None:
+            return int(row[0])
+
+        raise RuntimeError(
+            "Cannot determine max zoom level: 'tiles' table appears to be empty."
+        )
+    finally:
+        db.close()
 
 
 #
@@ -341,6 +383,12 @@ def main():
     cache_output_folder = arguments.destination
     max_level_param = arguments.max_level
     print('Input file: {0}'.format(os.path.basename(mb_tile_file)))
+
+    # Resolve max zoom level when not provided by the user
+    if max_level_param == -1:
+        print('--max_level not specified, querying MBTiles file…')
+        max_level_param = get_max_level(mb_tile_file)
+        print('Max zoom level detected: {0}'.format(max_level_param))
 
     # prepare output template
     if os.path.exists(cache_output_folder):
