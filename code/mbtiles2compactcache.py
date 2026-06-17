@@ -74,7 +74,7 @@ class Bundle:
         self.fd = None
         regex = r"L(..)"
         self.level = re.findall(regex, self.file_name)[0]
-        fname = self.file_name.split('.bundle')[0].split('\\')[-1]
+        fname = self.file_name.split('.bundle')[0].split(os.sep)[-1]
         s_val = fname[1:].split('C')
         self.row_offset = int(s_val[0], 16)
         self.col_offset = int(s_val[1], 16)
