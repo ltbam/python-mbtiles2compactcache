@@ -173,18 +173,21 @@ class BundleManager:
                 'SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles'
             )
 
-        while True:
-            rows = row_cursor.fetchmany(Application.rec_per_request)
-            if not rows:
-                break
-            queue.put(rows)  # blocks naturally if workers are slow (backpressure)
-
-        # Poison pill: one per worker so each exits cleanly
-        for _ in range(num_workers):
-            queue.put(None)
-
-        row_cursor.close()
-        database.close()
+        try:
+            while True:
+                rows = row_cursor.fetchmany(Application.rec_per_request)
+                if not rows:
+                    break
+                queue.put(rows)  # blocks naturally if workers are slow (backpressure)
+        except Exception as e:
+            print(f"Fetcher error: {e}")
+            raise
+        finally:
+            # Always send poison pills so workers are never left blocked on queue.get()
+            for _ in range(num_workers):
+                queue.put(None)
+            row_cursor.close()
+            database.close()
 
     @staticmethod
     def process(queue, arguments):
